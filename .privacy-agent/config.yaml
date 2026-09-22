@@ -1,0 +1,35 @@
+schema_version: 1
+active_policies:
+  - hipaa
+disabled_rules: []
+
+scan:
+  include_extensions:
+    - .c
+    - .cc
+    - .cpp
+    - .cs
+    - .go
+    - .java
+    - .js
+    - .jsx
+    - .kt
+    - .php
+    - .py
+    - .rb
+    - .rs
+    - .swift
+    - .ts
+    - .tsx
+    - .vue
+  exclude_prefixes:
+    - .git/
+    - .privacy-agent/
+    - .venv/
+    - node_modules/
+    - vendor/
+    - dist/
+    - build/
+    - privacy_agent/
+    - policies/
+    - tests/

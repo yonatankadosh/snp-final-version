@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "privacy-precommit-agent"
+version = "0.1.0"
+description = "IDE-agnostic, code-only privacy policy scanner for pre-commit workflows"
+requires-python = ">=3.11"
+dependencies = [
+  "mcp>=1.2.0",
+  "PyYAML>=6.0",
+]
+
+[project.scripts]
+privacy-agent = "privacy_agent.cli:main"
+privacy-agent-mcp = "privacy_agent.mcp_server:main"
+
+[tool.setuptools.packages.find]
+include = ["privacy_agent*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
