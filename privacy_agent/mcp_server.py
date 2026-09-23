@@ -99,12 +99,37 @@ def init_prompt() -> str:
     )
 
 
+@mcp.prompt(name="agentic-init")
+def agentic_init_prompt() -> str:
+    return (
+        "Establish a trustworthy privacy baseline using get_config and "
+        "init_scan. Use judgment to group repeated findings, prioritize the "
+        "most severe issues, explain what deserves attention first, and report "
+        "the saved JSON path and commit verdict. Keep raw sensitive values out "
+        "of user-visible output. If contextual triage is not reliable, follow "
+        "the strict init prompt as the deterministic fallback."
+    )
+
+
 @mcp.prompt(name="scan-diff")
 def scan_diff_prompt() -> str:
     return (
         "Run the normal pre-commit privacy check. Call scan_diff, report only "
         "findings in staged added lines, include the saved report path, and give "
         "the commit verdict. If there are no staged lines, say so clearly."
+    )
+
+
+@mcp.prompt(name="agentic-scan")
+def agentic_scan_prompt() -> str:
+    return (
+        "Assess the staged change with scan_diff. Group related findings, "
+        "prioritize them, explain their practical significance, recommend the "
+        "next action, and report the saved JSON path and verdict. If there are "
+        "no staged lines, explain that clearly and suggest an appropriate next "
+        "step without silently scanning unstaged files. If contextual assessment "
+        "is not reliable, follow the strict scan-diff prompt as the deterministic "
+        "fallback."
     )
 
 
@@ -119,6 +144,22 @@ def fix_prompt() -> str:
         "mark it skipped only when the user requests that. When no open findings "
         "remain, call verify_fixes with the source scan ID and report the new "
         "verdict. Never edit more than one finding per approval."
+    )
+
+
+@mcp.prompt(name="agentic-fix")
+def agentic_fix_prompt() -> str:
+    return (
+        "Review the latest open findings and inspect the relevant source "
+        "context. Group only similar, low-risk findings that share one clear "
+        "remediation. Present a bounded plan listing every intended edit and "
+        "obtain explicit permission before changing source code. Apply only the "
+        "approved edits, call verify_fixes with the source scan ID, and mark a "
+        "finding fixed only when verification confirms it is absent. Use only "
+        "redacted evidence in user-visible output. Stop and ask when remediation "
+        "is ambiguous or exceeds the approved plan. Fall back to the strict fix "
+        "prompt for one-finding-at-a-time handling when grouping is unsafe, the "
+        "change is high risk, or the user requests strict supervision."
     )
 
 

@@ -7,6 +7,48 @@ modify a database.
 
 ## Operations
 
+Prefer the agentic operations below. They use the same privacy tools and safety
+rules while allowing the agent to group findings, inspect relevant source
+context, and choose a useful presentation. If the agent lacks enough context,
+the remediation is ambiguous or unusually risky, the user requests the strict
+workflow, or findings cannot be grouped safely, use the matching deterministic
+fallback operation.
+
+### agentic-init
+
+Establish a trustworthy baseline with `get_config` and `init_scan`. Summarize
+the result according to the repository and findings: group repeated findings,
+prioritize the most severe issues, explain what deserves attention first, and
+report the JSON `report_path` and commit verdict. Keep the complete inventory
+in the saved report rather than flooding the conversation.
+
+Fall back to `init` when contextual triage is not reliable.
+
+### agentic-scan
+
+Assess the staged change with `scan_diff`. Group related findings, prioritize
+them, explain their practical significance, and recommend the next action.
+Report the saved JSON path and verdict. If there are no staged lines, explain
+that clearly and suggest an appropriate next step; never silently scan
+unstaged files.
+
+Fall back to `scan-diff` when contextual assessment is not reliable.
+
+### agentic-fix
+
+Review the latest open findings and inspect the relevant source context. Group
+only similar, low-risk findings that can share one clear remediation. Present
+a bounded fix plan listing every intended edit and obtain explicit permission
+before changing source code. Apply only the approved edits, verify them with
+`verify_fixes`, and mark a finding fixed only when verification confirms it is
+absent. Stop and ask the user when the right remediation is ambiguous or the
+required edit exceeds the approved plan.
+
+Fall back to `fix` for one-finding-at-a-time handling when grouping is unsafe,
+the change is high risk, or the user prefers strict supervision.
+
+## Deterministic fallback operations
+
 ### init
 
 1. Call `get_config`.
