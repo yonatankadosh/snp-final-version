@@ -1,11 +1,14 @@
-schema_version: 1
+schema_version: 2
 policy_id: hipaa
 name: HIPAA-oriented developer policy
-version: "1.0"
+version: "2.0"
 description: >
   Technical pre-commit controls inspired by the HIPAA Privacy Rule. This policy
   detects likely PHI exposure in source code; it is not legal certification.
 
+# Detectors are hints only. They point the reviewing model at likely spots;
+# the model decides whether each is a real violation and may report findings
+# no detector matched.
 detectors:
   email_literal:
     type: regex
@@ -29,46 +32,89 @@ detectors:
     maps_to: clinical_data
   sensitive_logging:
     type: regex
-    pattern: '(?:log(?:ger)?\.(?:debug|info|warning|error|critical)|print)\s*\([^\n]*(?:patient_name|email|phone|ssn|medical_record|mrn|diagnos|medication)'
+    pattern: '(?:log(?:ger)?\.(?:debug|info|warning|warn|error|critical)|console\.(?:log|info|warn|error|debug)|print)\s*\([^\n]*(?:patient|email|phone|ssn|medical_record|mrn|diagnos|medication)'
     maps_to: disclosure_path
+    redact: false  # matches code patterns, not personal values
   sensitive_export:
     type: regex
     pattern: '(?:write|writerow|to_csv|to_json|export)[^\n]*(?:patient_name|email|phone|ssn|medical_record|mrn|diagnos|medication)'
     maps_to: disclosure_path
+    redact: false  # matches code patterns, not personal values
 
 rules:
   - id: HIPAA-001
     name: No hardcoded direct identifiers
     severity: high
     risk_score: 75
+    description: >
+      Source code must not contain real or realistic direct identifiers of a
+      person: names tied to health context, email addresses, phone numbers,
+      SSNs, medical record numbers, addresses, or dates of birth. Clearly
+      synthetic placeholders (example.com/example.invalid addresses, 555
+      numbers, obviously fake values in tests) are acceptable. Numbers that are
+      not identifiers (timestamps, timeouts, IDs of non-persons, version
+      strings) are not violations.
+    examples:
+      violating:
+        - 'PATIENT_EMAIL = "jane.doe@gmail.com"'
+        - 'ssn = "123-45-6789"'
+      compliant:
+        - 'TEST_EMAIL = "patient@example.invalid"'
+        - 'ts = "2024-01-01 12:00:00"'
     detectors: [email_literal, phone_literal, us_ssn_literal, medical_record_literal]
     remediation:
       strategy: remove_sensitive_literal
       suggestion: Replace hardcoded identifiers with a runtime reference to a protected data source or a clearly synthetic fixture.
       agent_steps:
-        - Remove the matched identifier literal without changing unrelated behavior.
+        - Remove the identifier literal without changing unrelated behavior.
         - Replace it with a non-sensitive identifier, environment/config reference, or generated synthetic test value.
         - Confirm no raw identifier remains in the edited line or nearby fixture.
-      verify: Re-run the originating code scan and confirm this finding is absent.
 
   - id: HIPAA-002
     name: No PHI in logs or console output
     severity: high
     risk_score: 85
+    description: >
+      Logging, printing, console, telemetry, or error-reporting calls in any
+      language must not emit protected health information or direct
+      identifiers. This includes logging individual fields (name, email, phone,
+      SSN, MRN, diagnosis, medication) and logging whole patient/user/record
+      objects, request bodies, or dicts that contain them (e.g. via f-strings,
+      string formatting, structured-logging keyword arguments, or exception
+      messages). Logging a pseudonymous ID or non-sensitive event metadata is
+      acceptable. Names that merely mention a field without emitting its value
+      (e.g. a boolean `email_enabled`) are not violations.
+    examples:
+      violating:
+        - 'logger.info(f"created {patient}")'
+        - 'console.log(user.email)'
+        - 'log.msg("visit", diagnosis=record.diagnosis)'
+      compliant:
+        - 'logger.info("created patient_id=%s", patient.id)'
+        - 'logger.info("email_enabled=%s", flag)'
     detectors: [sensitive_logging]
     remediation:
       strategy: minimize_logging
       suggestion: Log a non-sensitive event or pseudonymous record identifier instead of PHI.
       agent_steps:
-        - Remove direct identifiers and clinical values from the log or print call.
+        - Remove direct identifiers, clinical values, and whole sensitive objects from the log or print call.
         - Preserve operational context with an event ID or pseudonymous record ID.
         - Keep logging structure and severity unchanged unless required by the fix.
-      verify: Re-run the originating code scan and confirm this logging path is clean.
 
   - id: HIPAA-003
     name: No hardcoded clinical information
     severity: high
     risk_score: 70
+    description: >
+      Source code must not contain real or realistic clinical details about an
+      individual (diagnoses, medications, lab results, treatment notes) as
+      literals or fixtures. Generic domain vocabulary (e.g. an enum of
+      condition codes, UI labels) is acceptable when not tied to a person.
+    examples:
+      violating:
+        - 'notes = "John Smith diagnosed with type 2 diabetes, on insulin"'
+      compliant:
+        - 'CONDITION_CODES = ["E11", "C50"]'
     detectors: [clinical_literal]
     remediation:
       strategy: externalize_clinical_data
@@ -77,12 +123,23 @@ rules:
         - Replace the clinical literal with a clearly synthetic value or a runtime data reference.
         - Preserve the code path and test intent.
         - Do not move the sensitive value into another tracked source file.
-      verify: Re-run the originating code scan and confirm the literal is absent.
 
   - id: HIPAA-004
     name: Minimize PHI in exports
     severity: high
     risk_score: 80
+    description: >
+      Code that exports, serializes, or sends data outside the service (CSV/JSON
+      files, reports, analytics events, third-party API calls) must include
+      only the minimum necessary PHI. Exporting direct identifiers or clinical
+      fields that the export purpose does not require is a violation; prefer
+      pseudonymous IDs and aggregates.
+    examples:
+      violating:
+        - 'writer.writerow([p.name, p.ssn, p.diagnosis])'
+        - 'analytics.track("visit", {"email": patient.email})'
+      compliant:
+        - 'writer.writerow([p.pseudo_id, p.visit_count])'
     detectors: [sensitive_export]
     remediation:
       strategy: deidentify_export
@@ -91,4 +148,3 @@ rules:
         - Restrict the exported fields to the minimum necessary non-identifying values.
         - Prefer pseudonymous IDs and aggregate values.
         - Preserve the export format expected by callers.
-      verify: Re-run the originating code scan and confirm the export path is clean.

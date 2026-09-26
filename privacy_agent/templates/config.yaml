@@ -1,4 +1,4 @@
-schema_version: 1
+schema_version: 2
 active_policies:
   - hipaa
 disabled_rules: []
@@ -30,6 +30,3 @@ scan:
     - vendor/
     - dist/
     - build/
-    - privacy_agent/
-    - policies/
-    - tests/

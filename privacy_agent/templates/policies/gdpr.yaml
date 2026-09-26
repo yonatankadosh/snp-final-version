@@ -1,11 +1,14 @@
-schema_version: 1
+schema_version: 2
 policy_id: gdpr
 name: GDPR-oriented developer policy
-version: "1.0"
+version: "2.0"
 description: >
   Technical pre-commit controls inspired by GDPR data minimization and special
   category protections. This policy is not legal certification.
 
+# Detectors are hints only. They point the reviewing model at likely spots;
+# the model decides whether each is a real violation and may report findings
+# no detector matched.
 detectors:
   email_literal:
     type: regex
@@ -21,8 +24,9 @@ detectors:
     maps_to: online_identifier
   sensitive_logging:
     type: regex
-    pattern: '(?:log(?:ger)?\.(?:debug|info|warning|error|critical)|print)\s*\([^\n]*(?:full_name|email|phone|address|birth|ip_address|genetic|biometric|religion|sexual_orientation|health)'
+    pattern: '(?:log(?:ger)?\.(?:debug|info|warning|warn|error|critical)|console\.(?:log|info|warn|error|debug)|print)\s*\([^\n]*(?:user|full_name|email|phone|address|birth|ip_address|genetic|biometric|religion|sexual_orientation|health)'
     maps_to: disclosure_path
+    redact: false  # matches code patterns, not personal values
   special_category_literal:
     type: regex
     pattern: '["''][^"'']*(?:genetic|biometric|religious belief|political opinion|sexual orientation|health condition|hiv)[^"'']*["'']'
@@ -31,40 +35,83 @@ detectors:
     type: regex
     pattern: '(?:write|writerow|to_csv|to_json|export)[^\n]*(?:full_name|email|phone|address|birth|ip_address|genetic|biometric|health)'
     maps_to: disclosure_path
+    redact: false  # matches code patterns, not personal values
 
 rules:
   - id: GDPR-001
     name: No hardcoded personal data
     severity: high
     risk_score: 70
+    description: >
+      Source code must not contain real or realistic personal data of an
+      identifiable person: names, email addresses, phone numbers, postal
+      addresses, dates of birth, national IDs, or IP addresses tied to a
+      person. Clearly synthetic placeholders (example.com/example.invalid,
+      documentation IP ranges like 192.0.2.0/24, obviously fake test values)
+      and non-personal values (timestamps, localhost, service hostnames,
+      timeouts) are not violations.
+    examples:
+      violating:
+        - 'ADMIN = {"name": "Maria Rossi", "email": "maria.rossi@gmail.com"}'
+      compliant:
+        - 'TEST_USER_EMAIL = "user@example.com"'
+        - 'BIND = "127.0.0.1"'
     detectors: [email_literal, phone_literal, ip_literal]
     remediation:
       strategy: remove_personal_data_literal
       suggestion: Replace hardcoded personal data with synthetic data or a protected runtime reference.
       agent_steps:
-        - Remove the matched personal-data literal without changing unrelated behavior.
+        - Remove the personal-data literal without changing unrelated behavior.
         - Use a clearly synthetic fixture, generated value, or runtime configuration reference.
         - Confirm the value was not copied into another tracked source file.
-      verify: Re-run the originating code scan and confirm this finding is absent.
 
   - id: GDPR-002
     name: No personal or special-category data in logs
     severity: high
     risk_score: 85
+    description: >
+      Logging, printing, console, telemetry, or error-reporting calls in any
+      language must not emit personal data or special-category data. This
+      includes individual fields (name, email, phone, address, date of birth,
+      IP address, health, religion, sexual orientation, biometric/genetic data)
+      and whole user/customer objects, request bodies, or dicts containing
+      them, whether via f-strings, formatting, structured-logging keyword
+      arguments, or exception messages. Logging a pseudonymous ID or
+      non-personal operational metadata is acceptable; a variable whose name
+      mentions a field but holds a non-personal value (e.g. a boolean flag, a
+      server address) is not a violation.
+    examples:
+      violating:
+        - 'logger.info(f"signup {user}")'
+        - 'console.log(user.email)'
+        - 'log.msg("login", email=u.email)'
+      compliant:
+        - 'logger.info("signup user_id=%s", user.id)'
+        - 'print("server address", host)'
     detectors: [sensitive_logging]
     remediation:
       strategy: minimize_logging
       suggestion: Log only an event ID or pseudonymous identifier needed for operations.
       agent_steps:
-        - Remove personal and special-category fields from the output call.
+        - Remove personal and special-category fields, and whole personal objects, from the output call.
         - Retain only the minimum operational metadata needed to debug the event.
         - Preserve the existing logging level unless the fix requires otherwise.
-      verify: Re-run the originating code scan and confirm the logging path is clean.
 
   - id: GDPR-003
     name: No hardcoded special-category data
     severity: very_high
     risk_score: 95
+    description: >
+      Source code must not contain special-category data about an individual
+      (health, genetic, biometric, religious or philosophical beliefs,
+      political opinions, sexual orientation, ethnic origin, trade-union
+      membership) as literals or fixtures. Generic vocabulary not tied to a
+      person (e.g. a list of selectable options) is acceptable.
+    examples:
+      violating:
+        - 'profile = {"name": "Ana", "religion": "Catholic", "hiv_status": "positive"}'
+      compliant:
+        - 'RELIGION_OPTIONS = ["prefer not to say", "other"]'
     detectors: [special_category_literal]
     remediation:
       strategy: remove_special_category_literal
@@ -73,12 +120,23 @@ rules:
         - Remove or replace the special-category literal with clearly synthetic data.
         - Preserve the behavior being tested.
         - Do not weaken access or validation logic as part of this change.
-      verify: Re-run the originating code scan and confirm the literal is absent.
 
   - id: GDPR-004
     name: Minimize personal data in exports
     severity: high
     risk_score: 80
+    description: >
+      Code that exports, serializes, or sends personal data outside the service
+      (files, reports, analytics events, third-party APIs) must include only
+      the fields necessary for the purpose. Exporting direct identifiers or
+      special-category fields that are not required is a violation; prefer
+      pseudonymous IDs and aggregates.
+    examples:
+      violating:
+        - 'df[["full_name", "email", "birth_date"]].to_csv("marketing.csv")'
+        - 'segment.track(user.id, "purchase", {"email": user.email})'
+      compliant:
+        - 'df[["user_id", "order_total"]].to_csv("orders.csv")'
     detectors: [personal_data_export]
     remediation:
       strategy: minimize_export
@@ -87,4 +145,3 @@ rules:
         - Remove personal fields not required by the export purpose.
         - Replace direct identifiers with pseudonymous IDs where possible.
         - Preserve the export schema only for fields that remain necessary.
-      verify: Re-run the originating code scan and confirm the export path is clean.
