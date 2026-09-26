@@ -10,12 +10,24 @@ legal advice.
 
 ## Commands
 
+Everything runs through Claude Code slash commands; there is no separate CLI.
+
 | Command | What it does |
 |---|---|
 | `/privacy-agent:init` | Installs `.privacy-agent/` (policies, config, audit-logs) into the repo |
 | `/privacy-agent:full-scan` | Reviews every tracked code file and writes an audit log |
 | `/privacy-agent:diff-scan [base]` | Reviews lines changed since the merge-base with `base` (default: the remote default branch), including uncommitted and untracked files |
 | `/privacy-agent:fix [scan-id]` | Proposes fixes for open findings, edits after your approval, then runs a verification scan |
+| `/privacy-agent:report [scan-id]` | Summarizes the latest (or a given) audit log without rescanning |
+| `/privacy-agent:triage [scan-id]` | Lets you mark findings as skipped (false positive or accepted risk) |
+| `/privacy-agent:config [policy ...]` | Chooses the active policies (e.g. `gdpr`, `hipaa gdpr`, `both`) |
+| `/privacy-agent:exclude [RULE-ID] [on\|off]` | Enables or disables a single rule |
+
+`config`, `exclude` and `triage` can only be started by you (Claude cannot
+invoke them on its own), and only they pre-approve the tools that change
+policies, rules or finding status. If Claude tries to call those tools during a
+scan or fix, Claude Code asks you first. A scan is also rejected if the policy
+changes between its start and its submission.
 
 ## How a scan works
 
@@ -37,8 +49,7 @@ spots; Claude confirms or dismisses them and reports what they miss.
 
 A finding becomes `fixed` only through `/privacy-agent:fix`'s verification
 scan: the re-review must not report it **and** its original line must no longer
-exist unchanged. Claude cannot mark findings fixed, and the MCP server exposes
-no tool to change policies or disable rules.
+exist unchanged. Claude cannot mark findings fixed.
 
 ## Install
 
@@ -55,7 +66,9 @@ Then, in each repository:
 /privacy-agent:init
 ```
 
-Commit `.privacy-agent/` so the team shares the policy and the audit trail.
+Choose policies with `/privacy-agent:config`, turn off rules you don't need with
+`/privacy-agent:exclude`, and commit `.privacy-agent/` so the team shares the
+policy and the audit trail.
 
 ### Team setup
 
@@ -106,19 +119,6 @@ rules:
 
 A detector that matches code patterns rather than personal values should set
 `redact: false` so it does not blank out evidence in the audit log.
-
-## Terminal CLI (humans)
-
-Choosing policies and disabling rules is done by people, not by Claude:
-
-```
-privacy-agent config hipaa gdpr      # choose active policies
-privacy-agent exclude GDPR-004 --disable
-privacy-agent rules                  # all rules with enabled state
-privacy-agent hints [--diff]         # regex hints only (no verdicts)
-privacy-agent report                 # print the latest audit log
-privacy-agent triage                 # mark false positives as skipped
-```
 
 ## Development
 

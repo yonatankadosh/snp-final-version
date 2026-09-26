@@ -13,7 +13,6 @@ dependencies = [
 ]
 
 [project.scripts]
-privacy-agent = "privacy_agent.cli:main"
 privacy-agent-mcp = "privacy_agent.mcp_server:main"
 
 [tool.setuptools.packages.find]

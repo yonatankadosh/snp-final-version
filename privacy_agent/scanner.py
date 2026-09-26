@@ -1,4 +1,9 @@
-"""Policy-driven, code-only scanning for tracked files and staged Git diffs."""
+"""Deterministic scan inputs: target selection, Git diffs, regex hints, redaction.
+
+Nothing here decides whether code violates a rule. That judgment belongs to the
+reviewing model; this module only selects what it should look at and supplies
+regex hits as leads.
+"""
 
 from __future__ import annotations
 
@@ -9,6 +14,8 @@ from pathlib import Path
 from typing import Any, Iterable
 
 SEVERITY_ORDER = {"low": 0, "medium": 1, "high": 2, "very_high": 3}
+EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+_STRING_LITERAL = re.compile(r"""(?P<q>["'`])(?P<body>(?:\\.|(?!(?P=q)).)*)(?P=q)""")
 
 
 def git(root: Path, *args: str, check: bool = True) -> str:
@@ -39,6 +46,34 @@ def _is_included(path: str, config: dict[str, Any]) -> bool:
     return Path(path).suffix.lower() in extensions
 
 
+def _glob_regex(pattern: str) -> re.Pattern[str]:
+    parts: list[str] = []
+    index = 0
+    while index < len(pattern):
+        if pattern.startswith("**/", index):
+            parts.append("(?:.*/)?")
+            index += 3
+        elif pattern.startswith("**", index):
+            parts.append(".*")
+            index += 2
+        elif pattern[index] == "*":
+            parts.append("[^/]*")
+            index += 1
+        elif pattern[index] == "?":
+            parts.append("[^/]")
+            index += 1
+        else:
+            parts.append(re.escape(pattern[index]))
+            index += 1
+    return re.compile("".join(parts) + r"\Z")
+
+
+def rule_applies(rule: dict[str, Any], path: str) -> bool:
+    """A rule without `applies_to` applies to every scanned file."""
+    patterns = rule.get("applies_to") or []
+    return not patterns or any(_glob_regex(p).match(path) for p in patterns)
+
+
 def tracked_files(root: Path, config: dict[str, Any]) -> list[str]:
     output = subprocess.run(
         ["git", "ls-files", "-z"],
@@ -49,24 +84,50 @@ def tracked_files(root: Path, config: dict[str, Any]) -> list[str]:
     if output.returncode:
         raise RuntimeError(output.stderr.decode("utf-8", errors="replace").strip())
     paths = output.stdout.decode("utf-8", errors="replace").split("\0")
-    return sorted(path for path in paths if path and _is_included(path, config))
+    return sorted(
+        path
+        for path in paths
+        if path and _is_included(path, config) and (root / path).is_file()
+    )
 
 
-def staged_added_lines(root: Path, config: dict[str, Any]) -> list[tuple[str, int, str]]:
-    """Return `(path, new_line_number, text)` for added lines in the staged diff."""
+def resolve_base(root: Path, base: str | None = None) -> str:
+    """Return the merge-base commit the branch diff is measured from."""
+    if git_commit(root) == "UNBORN":
+        return EMPTY_TREE
+    candidates = [base] if base else []
+    if not base:
+        remote_head = git(
+            root, "rev-parse", "--abbrev-ref", "origin/HEAD", check=False
+        ).strip()
+        candidates += [remote_head, "main", "master"]
+    for candidate in filter(None, candidates):
+        merge_base = git(root, "merge-base", "HEAD", candidate, check=False).strip()
+        if merge_base:
+            return merge_base
+    if base:
+        raise RuntimeError(f"cannot resolve base branch: {base}")
+    return git(root, "rev-parse", "HEAD").strip()
+
+
+def branch_changes(
+    root: Path, config: dict[str, Any], base: str | None = None
+) -> tuple[str, dict[str, list[tuple[int, int]]]]:
+    """Return `(base, {path: [(start, end), ...]})` for lines added or changed
+    since the merge-base, including uncommitted and untracked files."""
+    base_commit = resolve_base(root, base)
     patch = git(
         root,
         "diff",
-        "--cached",
+        base_commit,
         "--unified=0",
         "--no-color",
         "--find-renames",
         "--diff-filter=ACMR",
         "--",
     )
-    added: list[tuple[str, int, str]] = []
+    changes: dict[str, list[tuple[int, int]]] = {}
     current_path: str | None = None
-    new_line: int | None = None
 
     for raw in patch.splitlines():
         if raw.startswith("+++ "):
@@ -75,29 +136,87 @@ def staged_added_lines(root: Path, config: dict[str, Any]) -> list[tuple[str, in
             if current_path == "/dev/null" or not _is_included(current_path, config):
                 current_path = None
             continue
+        if raw.startswith("@@ ") and current_path is not None:
+            match = re.search(r"\+(\d+)(?:,(\d+))?", raw)
+            if not match:
+                continue
+            start = int(match.group(1))
+            count = int(match.group(2)) if match.group(2) is not None else 1
+            if count:
+                changes.setdefault(current_path, []).append((start, start + count - 1))
 
-        if raw.startswith("@@ "):
-            match = re.search(r"\+(\d+)(?:,\d+)?", raw)
-            new_line = int(match.group(1)) if match else None
+    untracked = git(root, "ls-files", "--others", "--exclude-standard", "-z")
+    for path in filter(None, untracked.split("\0")):
+        if not _is_included(path, config):
             continue
+        lines = read_lines(root / path)
+        if lines:
+            changes[path] = [(1, len(lines))]
 
-        if current_path is None or new_line is None:
-            continue
-        if raw.startswith("+") and not raw.startswith("+++"):
-            added.append((current_path, new_line, raw[1:]))
-            new_line += 1
-        elif raw.startswith("-") and not raw.startswith("---"):
-            continue
-        elif not raw.startswith("\\"):
-            new_line += 1
+    return base_commit, {
+        path: ranges for path, ranges in sorted(changes.items())
+        if (root / path).is_file()
+    }
 
-    return added
+
+def read_lines(path: Path) -> list[str] | None:
+    try:
+        return path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):
+        return None
+
+
+def file_sha256(path: Path) -> str | None:
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
+def normalize(text: str) -> str:
+    return " ".join(text.split())
+
+
+def in_ranges(line: int, ranges: Iterable[Iterable[int]] | None) -> bool:
+    if ranges is None:
+        return True
+    return any(start <= line <= end for start, end in ranges)
 
 
 def _matches(detector: dict[str, Any], text: str) -> list[re.Match[str]]:
     if detector.get("type") != "regex":
         return []
     return list(re.finditer(detector["pattern"], text, flags=re.IGNORECASE))
+
+
+def collect_hints(
+    path: str,
+    lines: list[str],
+    ranges: list[tuple[int, int]] | None,
+    policies: list[dict[str, Any]],
+    active_rule_ids: set[str],
+) -> list[dict[str, Any]]:
+    """Regex hits on active rules, as leads for the reviewing model."""
+    hints: list[dict[str, Any]] = []
+    for number, text in enumerate(lines, start=1):
+        if not in_ranges(number, ranges):
+            continue
+        for policy in policies:
+            detectors = policy.get("detectors", {})
+            for rule in policy.get("rules", []):
+                if rule["id"] not in active_rule_ids or not rule_applies(rule, path):
+                    continue
+                for detector_name in rule.get("detectors", []):
+                    if _matches(detectors.get(detector_name, {}), text):
+                        hints.append(
+                            {
+                                "file": path,
+                                "line": number,
+                                "rule_id": rule["id"],
+                                "detector": detector_name,
+                            }
+                        )
+    return hints
 
 
 def _redact(text: str, spans: Iterable[tuple[int, int]], token: str, max_len: int) -> str:
@@ -115,115 +234,22 @@ def _redact(text: str, spans: Iterable[tuple[int, int]], token: str, max_len: in
     return text
 
 
-def analyze_line(
-    path: str,
-    line_number: int,
+def redact_evidence(
     text: str,
     policies: list[dict[str, Any]],
-    disabled_rules: set[str],
-    redaction_token: str = "[REDACTED]",
-    max_evidence_length: int = 160,
-) -> dict[str, Any] | None:
-    matched_rules: list[dict[str, Any]] = []
-    detector_names: set[str] = set()
-    data_classes: set[str] = set()
-    spans: list[tuple[int, int]] = []
-
+    token: str = "[REDACTED]",
+    max_len: int = 160,
+) -> str:
+    """Mask every string literal body and every value detector match (those
+    without `redact: false`), keeping the code structure readable while
+    dropping the values that may be personal."""
+    spans = [
+        (match.start("body"), match.end("body"))
+        for match in _STRING_LITERAL.finditer(text)
+        if match.group("body")
+    ]
     for policy in policies:
-        detectors = policy.get("detectors", {})
-        for rule in policy.get("rules", []):
-            if rule["id"] in disabled_rules:
-                continue
-            rule_hits: list[tuple[str, dict[str, Any], re.Match[str]]] = []
-            for detector_name in rule.get("detectors", []):
-                detector = detectors.get(detector_name, {})
-                for match in _matches(detector, text):
-                    rule_hits.append((detector_name, detector, match))
-            if not rule_hits:
-                continue
-
-            matched_rules.append(
-                {
-                    "policy_id": policy["policy_id"],
-                    "rule_id": rule["id"],
-                    "rule_name": rule["name"],
-                    "severity": rule["severity"],
-                    "risk_score": int(rule["risk_score"]),
-                    "remediation": rule["remediation"],
-                }
-            )
-            for detector_name, detector, match in rule_hits:
-                detector_names.add(f"{policy['policy_id']}:{detector_name}")
-                data_classes.add(detector.get("maps_to", "unknown"))
-                spans.append((match.start(), match.end()))
-
-    if not matched_rules:
-        return None
-
-    highest = max(
-        (rule["severity"] for rule in matched_rules),
-        key=lambda value: SEVERITY_ORDER.get(value, 0),
-    )
-    risk_score = max(rule["risk_score"] for rule in matched_rules)
-    source_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
-    fingerprint = hashlib.sha256(
-        f"{path}:{line_number}:{source_hash}".encode("utf-8")
-    ).hexdigest()
-
-    return {
-        "violation_id": f"v_{fingerprint[:16]}",
-        "fingerprint": fingerprint,
-        "status": "open",
-        "file": path,
-        "line": line_number,
-        "location": f"{path}:{line_number}",
-        "severity": highest,
-        "risk_score": risk_score,
-        "data_classes": sorted(data_classes),
-        "detectors": sorted(detector_names),
-        "evidence_summary": _redact(
-            text, spans, redaction_token, max_evidence_length
-        ),
-        "matched_rules": matched_rules,
-    }
-
-
-def scan_lines(
-    lines: Iterable[tuple[str, int, str]],
-    policies: list[dict[str, Any]],
-    config: dict[str, Any],
-) -> list[dict[str, Any]]:
-    disabled = set(config.get("disabled_rules", []))
-    findings: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    for path, line_number, text in lines:
-        finding = analyze_line(path, line_number, text, policies, disabled)
-        if finding and finding["fingerprint"] not in seen:
-            findings.append(finding)
-            seen.add(finding["fingerprint"])
-    return sorted(
-        findings,
-        key=lambda item: (
-            -SEVERITY_ORDER.get(item["severity"], 0),
-            item["file"],
-            item["line"],
-        ),
-    )
-
-
-def repository_lines(
-    root: Path, config: dict[str, Any]
-) -> tuple[list[str], list[tuple[str, int, str]]]:
-    files = tracked_files(root, config)
-    lines: list[tuple[str, int, str]] = []
-    for relative in files:
-        path = root / relative
-        try:
-            content = path.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
-            continue
-        lines.extend(
-            (relative, number, text)
-            for number, text in enumerate(content.splitlines(), start=1)
-        )
-    return files, lines
+        for detector in policy.get("detectors", {}).values():
+            if detector.get("redact", True):
+                spans.extend((m.start(), m.end()) for m in _matches(detector, text))
+    return _redact(text, spans, token, max_len)

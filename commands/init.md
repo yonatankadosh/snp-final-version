@@ -9,7 +9,7 @@ Install the privacy agent into the current repository.
 2. Call `get_active_rules` and list the enabled rules (ID, name, severity) in a short table.
 3. Tell the user:
    - which files were created and which already existed;
-   - policies live in `.privacy-agent/policies/`, and active policies / disabled rules are chosen in `.privacy-agent/config.yaml` (or with `privacy-agent config` / `privacy-agent exclude` in a terminal);
+   - policies live in `.privacy-agent/policies/`, and active policies / disabled rules are chosen in `.privacy-agent/config.yaml` (or with `/privacy-agent:config` and `/privacy-agent:exclude`);
    - audit logs are written to `.privacy-agent/audit-logs/`;
    - to commit `.privacy-agent/` so the whole team shares the policy;
    - next step: `/privacy-agent:full-scan` for a baseline, then `/privacy-agent:diff-scan` before each commit.

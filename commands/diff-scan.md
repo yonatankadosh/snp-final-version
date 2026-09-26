@@ -29,4 +29,4 @@ You are the judge. The server has already chosen what to review and which rules 
 - Findings grouped by severity, then file, as `file:line  RULE-ID  rule name`, with one line of explanation each. Use only the redacted `evidence_summary` from the audit log (`get_latest_report`) when quoting code; never print raw personal values.
 - If there are findings, suggest `/privacy-agent:fix`.
 
-Do not edit any files during a scan.
+Do not edit any files, and never change policies, rules, or finding status, during a scan.
