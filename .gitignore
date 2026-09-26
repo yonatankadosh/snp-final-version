@@ -6,6 +6,3 @@ __pycache__/
 .DS_Store
 dist/
 build/
-
-# Local scan history; the shared configuration remains tracked.
-.privacy-agent/violations/
