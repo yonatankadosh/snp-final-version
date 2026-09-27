@@ -1,0 +1,16 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "privacy-agent",
+  "description": "Privacy regulation helper for Claude Code",
+  "owner": {
+    "name": "privacy-agent maintainers"
+  },
+  "plugins": [
+    {
+      "name": "privacy-agent",
+      "description": "Pre-commit privacy regulation checks judged by Claude",
+      "source": "./",
+      "category": "security"
+    }
+  ]
+}

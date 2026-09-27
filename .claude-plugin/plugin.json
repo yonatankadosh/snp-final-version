@@ -1,0 +1,8 @@
+{
+  "name": "privacy-agent",
+  "version": "0.2.0",
+  "description": "Pre-commit privacy regulation checks (HIPAA/GDPR-style policies) judged by Claude, with deterministic policy loading, validation, and audit logs",
+  "author": {
+    "name": "privacy-agent maintainers"
+  }
+}

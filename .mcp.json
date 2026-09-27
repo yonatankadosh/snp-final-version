@@ -1,0 +1,6 @@
+{
+  "privacy-agent": {
+    "command": "uv",
+    "args": ["run", "--quiet", "--project", "${CLAUDE_PLUGIN_ROOT}", "privacy-agent-mcp"]
+  }
+}
