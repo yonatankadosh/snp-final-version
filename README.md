@@ -133,7 +133,7 @@ Choose **one** of the options below.
 2. Add the marketplace. In the Claude Code prompt, type:
 
    ```
-   /plugin marketplace add yonatankadosh/snp-final-version
+   /plugin marketplace add yonatankadosh/Data-compliance-consultant
    ```
 
    This clones the GitHub repository and registers a marketplace named
@@ -164,7 +164,7 @@ Choose **one** of the options below.
 You can do the same from your shell instead of the Claude Code prompt:
 
 ```bash
-claude plugin marketplace add yonatankadosh/snp-final-version
+claude plugin marketplace add yonatankadosh/Data-compliance-consultant
 claude plugin install privacy-agent@privacy-agent            # user scope
 # or: claude plugin install privacy-agent@privacy-agent --scope project
 ```
@@ -177,8 +177,8 @@ branch, or are editing the plugin.
 1. Clone the repository:
 
    ```bash
-   git clone https://github.com/yonatankadosh/snp-final-version.git
-   cd snp-final-version
+   git clone https://github.com/yonatankadosh/Data-compliance-consultant.git
+   cd Data-compliance-consultant
    ```
 
 2. Optional: check that the server's dependencies install and the tests pass:
@@ -205,7 +205,7 @@ To try the plugin without installing it, start Claude Code with the plugin
 directory:
 
 ```bash
-claude --plugin-dir /absolute/path/to/snp-final-version
+claude --plugin-dir /absolute/path/to/Data-compliance-consultant
 ```
 
 The plugin is active only for that session. You need to pass the flag every
@@ -344,7 +344,7 @@ following to the repository's `.claude/settings.json` and commit it:
 {
   "extraKnownMarketplaces": {
     "privacy-agent": {
-      "source": { "source": "github", "repo": "yonatankadosh/snp-final-version" }
+      "source": { "source": "github", "repo": "yonatankadosh/Data-compliance-consultant" }
     }
   },
   "enabledPlugins": { "privacy-agent@privacy-agent": true },
